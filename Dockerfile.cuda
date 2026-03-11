@@ -32,6 +32,8 @@ RUN git clone --branch n7.0 --depth 1 \
 # ---------- stage 2: runtime image ----------
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
+ARG SHAKA_VERSION=v3.5.0
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
@@ -40,6 +42,14 @@ ENV NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
 COPY --from=ffmpeg-builder /usr/local/bin/ff* /usr/local/bin/
 COPY --from=ffmpeg-builder /usr/local/lib/lib*.so* /usr/local/lib/
 RUN ldconfig
+
+# Install Shaka Packager
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && curl -fsSL -o /usr/local/bin/packager \
+       "https://github.com/shaka-project/shaka-packager/releases/download/${SHAKA_VERSION}/packager-linux-x64" \
+    && chmod +x /usr/local/bin/packager \
+    && apt-get purge -y curl && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install Python 3.12
 RUN apt-get update && apt-get install -y --no-install-recommends \

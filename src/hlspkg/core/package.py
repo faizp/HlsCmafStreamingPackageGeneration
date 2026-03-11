@@ -1,4 +1,4 @@
-"""Config-driven CMAF HLS packaging."""
+"""Config-driven CMAF HLS packaging via Shaka Packager."""
 
 from __future__ import annotations
 
@@ -6,9 +6,8 @@ import logging
 from pathlib import Path
 
 from hlspkg.config.schema import AppConfig
-from hlspkg.exceptions import PackageError
-from hlspkg.ffutil import run_ffmpeg
 from hlspkg.models import PackageOutput, TranscodeOutput
+from hlspkg.shakautil import run_shaka
 
 log = logging.getLogger(__name__)
 
@@ -44,55 +43,51 @@ def _collect_outputs(hls_dir: Path) -> PackageOutput:
 def package(
     tc_output: TranscodeOutput, config: AppConfig, work_dir: Path
 ) -> PackageOutput:
-    """Package transcoded streams into CMAF HLS."""
+    """Package transcoded streams into CMAF HLS using Shaka Packager."""
     hls_dir = work_dir / "hls"
     hls_dir.mkdir(parents=True, exist_ok=True)
 
     seg_dur = config.packaging.segment_duration
 
-    if tc_output.audio_path is not None:
-        # Mux video + audio with separate CMAF tracks
-        args = [
-            "-i", str(tc_output.video_path),
-            "-i", str(tc_output.audio_path),
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-c", "copy",
-            "-f", "hls",
-            "-hls_time", str(seg_dur),
-            "-hls_playlist_type", "vod",
-            "-hls_segment_type", config.packaging.segment_type,
-            "-hls_fmp4_init_filename", "init.mp4",
-            "-hls_flags", "independent_segments",
-            "-hls_list_size", "0",
-            "-hls_segment_filename", str(hls_dir / "stream_%v" / "seg_%03d.m4s"),
-            "-master_pl_name", "master.m3u8",
-            "-var_stream_map", "v:0,agroup:audio,name:video a:0,agroup:audio,name:audio",
-            str(hls_dir / "stream_%v" / "stream.m3u8"),
-        ]
-    else:
-        # Video-only
-        args = [
-            "-i", str(tc_output.video_path),
-            "-c", "copy",
-            "-f", "hls",
-            "-hls_time", str(seg_dur),
-            "-hls_playlist_type", "vod",
-            "-hls_segment_type", config.packaging.segment_type,
-            "-hls_fmp4_init_filename", "init.mp4",
-            "-hls_flags", "independent_segments",
-            "-hls_list_size", "0",
-            "-hls_segment_filename", str(hls_dir / "stream_video" / "seg_%03d.m4s"),
-            "-master_pl_name", "master.m3u8",
-            str(hls_dir / "stream_video" / "stream.m3u8"),
-        ]
+    video_dir = hls_dir / "stream_video"
+    video_dir.mkdir(parents=True, exist_ok=True)
 
-    # Ensure output sub-directories exist
-    (hls_dir / "stream_video").mkdir(parents=True, exist_ok=True)
+    stream_descriptors: list[str] = []
+
+    # Video stream descriptor
+    video_desc = (
+        f"in={tc_output.video_path},"
+        f"stream=video,"
+        f"init_segment={video_dir / 'init.mp4'},"
+        f"segment_template={video_dir / 'seg_$Number$.m4s'},"
+        f"playlist_name={video_dir / 'stream.m3u8'}"
+    )
+    stream_descriptors.append(video_desc)
+
+    # Audio stream descriptor (if present)
     if tc_output.audio_path is not None:
-        (hls_dir / "stream_audio").mkdir(parents=True, exist_ok=True)
+        audio_dir = hls_dir / "stream_audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+
+        audio_desc = (
+            f"in={tc_output.audio_path},"
+            f"stream=audio,"
+            f"init_segment={audio_dir / 'init.mp4'},"
+            f"segment_template={audio_dir / 'seg_$Number$.m4s'},"
+            f"playlist_name={audio_dir / 'stream.m3u8'},"
+            f"hls_group_id=audio,"
+            f"hls_name=default"
+        )
+        stream_descriptors.append(audio_desc)
+
+    flags = [
+        "--hls_master_playlist_output",
+        str(hls_dir / "master.m3u8"),
+        "--segment_duration",
+        str(seg_dur),
+    ]
 
     log.info("Packaging CMAF HLS → %s", hls_dir)
-    run_ffmpeg(args, error_cls=PackageError)
+    run_shaka(stream_descriptors, flags)
 
     return _collect_outputs(hls_dir)
