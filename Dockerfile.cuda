@@ -4,15 +4,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
 
+# Install Python 3.12 + build deps (no apt ffmpeg — it lacks NVENC)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        software-properties-common \
+        software-properties-common curl xz-utils \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y --no-install-recommends \
         python3.12 python3.12-venv python3.12-dev python3-pip \
-        ffmpeg \
     && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
     && ln -sf /usr/bin/python3.12 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
+
+# Install ffmpeg static build with NVENC support (BtbN GPL build)
+RUN curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
+    | tar xJ --strip-components=2 -C /usr/local/bin/ --wildcards '*/bin/ff*'
 
 WORKDIR /app
 COPY pyproject.toml .
