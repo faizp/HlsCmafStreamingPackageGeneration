@@ -59,7 +59,7 @@ def _smoke_test_encoder(codec: str) -> bool:
     """
     cmd = [
         "ffmpeg", "-hide_banner", "-y",
-        "-f", "lavfi", "-i", "color=black:s=64x64:d=0.04:r=25",
+        "-f", "lavfi", "-i", "color=black:s=256x256:d=0.04:r=25",
         "-frames:v", "1",
         "-c:v", codec,
         "-f", "null", "-",
