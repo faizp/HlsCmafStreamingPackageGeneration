@@ -50,21 +50,29 @@ def _ffmpeg_has_encoder(codec: str) -> bool:
         return False
 
 
-def _smoke_test_encoder(codec: str, hwaccel: str | None = None) -> bool:
-    """Run a zero-frame encode to confirm the encoder actually works at runtime."""
-    cmd = ["ffmpeg", "-hide_banner", "-y"]
-    if hwaccel:
-        cmd.extend(["-hwaccel", hwaccel])
-    cmd.extend([
-        "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.01",
+def _smoke_test_encoder(codec: str) -> bool:
+    """Run a zero-frame encode to confirm the encoder actually works at runtime.
+
+    Uses a software lavfi source without hwaccel so the test works regardless
+    of whether the encoder expects GPU or CPU input frames — NVENC can accept
+    system-memory frames and will upload internally.
+    """
+    cmd = [
+        "ffmpeg", "-hide_banner", "-y",
+        "-f", "lavfi", "-i", "color=black:s=64x64:d=0.04:r=25",
         "-frames:v", "1",
         "-c:v", codec,
         "-f", "null", "-",
-    ])
+    ]
     try:
-        subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=True)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=15, check=True,
+        )
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+    except subprocess.CalledProcessError as exc:
+        log.debug("Smoke test for %s failed: %s", codec, exc.stderr.strip())
+        return False
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 
@@ -96,12 +104,7 @@ def detect_encoder(config: AppConfig, force_cpu: bool = False) -> ResolvedEncode
             log.debug("Encoder %s not listed by ffmpeg, skipping", codec)
             continue
 
-        # Determine hwaccel for smoke test (NVENC needs cuda)
-        hwaccel = None
-        if enc_type == EncoderType.NVENC:
-            hwaccel = config.video.encoders.nvenc.hwaccel
-
-        if _smoke_test_encoder(codec, hwaccel):
+        if _smoke_test_encoder(codec):
             display = {
                 EncoderType.NVENC: "NVENC",
                 EncoderType.VIDEOTOOLBOX: "VideoToolbox",
