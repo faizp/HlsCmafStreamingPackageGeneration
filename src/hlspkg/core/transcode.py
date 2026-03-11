@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 from pathlib import Path
 
 from hlspkg.config.schema import AppConfig
@@ -13,32 +12,6 @@ from hlspkg.ffutil import run_ffmpeg
 from hlspkg.models import EncodingPlan, ProbeResult, TranscodeOutput
 
 log = logging.getLogger(__name__)
-
-
-def _can_hw_decode(codec_name: str) -> bool:
-    """Check if ffmpeg has a CUDA HW decoder for the given codec."""
-    cuvid_name = f"{codec_name}_cuvid"
-    try:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-decoders"],
-            capture_output=True, text=True, timeout=10,
-        )
-        return cuvid_name in result.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
-
-def _build_input_flags(
-    encoder: ResolvedEncoder, config: AppConfig, hw_decode: bool,
-) -> list[str]:
-    """Build hwaccel flags that go before -i (NVENC + cuvid only)."""
-    if encoder.type == EncoderType.NVENC and hw_decode:
-        nvenc = config.video.encoders.nvenc
-        return [
-            "-hwaccel", nvenc.hwaccel,
-            "-hwaccel_output_format", nvenc.hwaccel_output_format,
-        ]
-    return []
 
 
 def _build_encoder_args(
@@ -82,50 +55,27 @@ def _build_encoder_args(
 
 def _build_video_filter(
     plan: EncodingPlan, config: AppConfig, encoder: ResolvedEncoder,
-    hw_decode: bool,
 ) -> str:
-    """Build the -vf filter chain, using the correct scale filter for the encoder."""
+    """Build the -vf filter chain.
+
+    All encoders (including NVENC) use CPU-side filters. NVENC accepts
+    CPU-memory frames and handles the upload to GPU internally, which
+    avoids fragile hwaccel/cuvid dependencies.
+    """
     filters: list[str] = []
 
-    if encoder.type == EncoderType.NVENC and hw_decode:
-        scale_filter = config.video.encoders.nvenc.scale_filter
-        # NVENC with fps cap: use CPU filters to avoid mixed filter graph
-        if plan.needs_fps_cap:
-            # Must download from GPU, filter on CPU, then re-upload
-            if plan.needs_scale:
-                filters.append(
-                    f"hwdownload,format=nv12,"
-                    f"scale={plan.target_width}:{plan.target_height},"
-                    f"fps={plan.target_fps},"
-                    f"format={config.video.pix_fmt},"
-                    f"hwupload_cuda"
-                )
-            else:
-                filters.append(
-                    f"hwdownload,format=nv12,"
-                    f"fps={plan.target_fps},"
-                    f"format={config.video.pix_fmt},"
-                    f"hwupload_cuda"
-                )
-        else:
-            if plan.needs_scale:
-                filters.append(
-                    f"{scale_filter}={plan.target_width}:{plan.target_height}"
-                )
-            # format conversion happens on GPU side via hwaccel_output_format
+    if encoder.type == EncoderType.VIDEOTOOLBOX:
+        scale_filter = config.video.encoders.videotoolbox.scale_filter
     else:
-        if encoder.type == EncoderType.VIDEOTOOLBOX:
-            scale_filter = config.video.encoders.videotoolbox.scale_filter
-        else:
-            scale_filter = "scale"
+        scale_filter = "scale"
 
-        if plan.needs_scale:
-            filters.append(f"{scale_filter}={plan.target_width}:{plan.target_height}")
-        if plan.needs_fps_cap:
-            filters.append(f"fps={plan.target_fps}")
-        filters.append(f"format={config.video.pix_fmt}")
+    if plan.needs_scale:
+        filters.append(f"{scale_filter}={plan.target_width}:{plan.target_height}")
+    if plan.needs_fps_cap:
+        filters.append(f"fps={plan.target_fps}")
+    filters.append(f"format={config.video.pix_fmt}")
 
-    return ",".join(filters) if filters else f"format={config.video.pix_fmt}"
+    return ",".join(filters)
 
 
 def build_video_args(
@@ -134,29 +84,11 @@ def build_video_args(
     config: AppConfig,
     output_path: Path,
     encoder: ResolvedEncoder,
-    probe: ProbeResult | None = None,
 ) -> list[str]:
     """Build ffmpeg args for video-only transcoding."""
-    hw_decode = (
-        encoder.type == EncoderType.NVENC
-        and probe is not None
-        and _can_hw_decode(probe.codec_name)
-    )
-    if encoder.type == EncoderType.NVENC:
-        if hw_decode:
-            log.info("Using CUDA HW decode for %s", probe.codec_name)
-        else:
-            codec = probe.codec_name if probe else "unknown"
-            log.info(
-                "No cuvid decoder for %s — CPU decode + NVENC encode",
-                codec,
-            )
-
-    vf = _build_video_filter(plan, config, encoder, hw_decode)
+    vf = _build_video_filter(plan, config, encoder)
 
     args: list[str] = []
-    # hwaccel flags must come before -i
-    args.extend(_build_input_flags(encoder, config, hw_decode))
     args.extend(["-i", str(input_path)])
     args.append("-an")
     args.extend(["-vf", vf])
@@ -212,9 +144,7 @@ def transcode(
 
     video_out = work_dir / "video.mp4"
     log.info("Transcoding video → %s (encoder=%s)", video_out, encoder.name)
-    video_args = build_video_args(
-        input_path, plan, config, video_out, encoder, probe,
-    )
+    video_args = build_video_args(input_path, plan, config, video_out, encoder)
 
     try:
         run_ffmpeg(video_args, error_cls=TranscodeError)
@@ -227,7 +157,7 @@ def transcode(
                 type=EncoderType.CPU, is_gpu=False, name="CPU"
             )
             video_args = build_video_args(
-                input_path, plan, config, video_out, cpu_encoder, probe,
+                input_path, plan, config, video_out, cpu_encoder,
             )
             run_ffmpeg(video_args, error_cls=TranscodeError)
         else:
