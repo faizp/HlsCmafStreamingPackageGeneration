@@ -22,7 +22,7 @@ Single-rendition VOD pipeline: takes any video file, transcodes it to a single r
 - `config/default.yaml` — All encoding/packaging tunables (single source of truth)
 - `src/hlspkg/cli.py` — Click CLI entry point
 - `src/hlspkg/config/` — Config schema (dataclasses) and YAML loader
-- `src/hlspkg/core/` — Pipeline: preflight → transcode → package
+- `src/hlspkg/core/` — Pipeline: preflight → encoder detection → transcode → package
 - `src/hlspkg/storage/` — Pluggable I/O (local filesystem or S3)
 - `src/hlspkg/publish/` — Atomic publish ordering
 - `src/hlspkg/models.py` — Data models (ProbeResult, EncodingPlan, etc.)
@@ -47,8 +47,25 @@ docker compose run hlspkg /data/input/video.mp4 --output /data/output --crf 20 -
 # Local dev install (requires ffmpeg on host)
 pip install -e .
 hlspkg /path/to/video.mp4 --output /tmp/output -v
+
+# Force CPU encoding (skip GPU auto-detection)
+hlspkg /path/to/video.mp4 --output /tmp/output -v --cpu
+
+# Docker GPU (NVIDIA, requires nvidia-docker runtime)
+docker compose run hlspkg-gpu /data/input/video.mp4 --output /data/output -v
 ```
 
 ## Configuration
 
 Edit `config/default.yaml` to change encoding parameters. No Python changes needed for tuning. CLI flags `--crf` and `--segment-duration` override specific values. A full override YAML can be passed with `--config`.
+
+## GPU Encoding
+
+The pipeline auto-detects the best available encoder at startup, walking `video.encoder_preference` in `config/default.yaml` (default: NVENC → VideoToolbox → CPU). Each candidate is verified with a zero-frame smoke test before use. If a GPU encoder fails during transcoding, it automatically retries with CPU.
+
+- **NVENC** — requires NVIDIA GPU + CUDA drivers. Use `Dockerfile.cuda` / `hlspkg-gpu` service.
+- **VideoToolbox** — macOS only, available when running natively with host ffmpeg.
+- **CPU (libx264)** — always available as final fallback.
+- **`--cpu` flag** — skips GPU detection entirely, useful for debugging or benchmarking.
+
+Encoder-specific knobs live under `video.encoders.<name>` in `config/default.yaml`.

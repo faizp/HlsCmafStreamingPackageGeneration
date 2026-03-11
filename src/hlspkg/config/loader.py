@@ -11,10 +11,14 @@ import yaml
 from hlspkg.config.schema import (
     AppConfig,
     AudioConfig,
+    CpuEncoderConfig,
+    EncodersConfig,
+    NvencEncoderConfig,
     OutputConfig,
     PackagingConfig,
     VideoConfig,
     VideoProfile,
+    VideotoolboxEncoderConfig,
 )
 
 _DEFAULT_CONFIG = Path(__file__).resolve().parents[3] / "config" / "default.yaml"
@@ -52,6 +56,38 @@ def _parse_profiles(raw: dict[str, Any]) -> dict[int, VideoProfile]:
     return profiles
 
 
+def _parse_encoder_configs(raw: dict[str, Any]) -> EncodersConfig:
+    """Parse the encoders sub-section into typed dataclasses."""
+    cpu_raw = raw["cpu"]
+    nvenc_raw = raw["nvenc"]
+    vt_raw = raw["videotoolbox"]
+
+    return EncodersConfig(
+        cpu=CpuEncoderConfig(
+            codec=cpu_raw["codec"],
+            preset=cpu_raw["preset"],
+            crf=int(cpu_raw["crf"]),
+        ),
+        nvenc=NvencEncoderConfig(
+            codec=nvenc_raw["codec"],
+            preset=nvenc_raw["preset"],
+            cq=int(nvenc_raw["cq"]),
+            rc=nvenc_raw["rc"],
+            hwaccel=nvenc_raw["hwaccel"],
+            hwaccel_output_format=nvenc_raw["hwaccel_output_format"],
+            scale_filter=nvenc_raw["scale_filter"],
+            extra_args=list(nvenc_raw.get("extra_args", [])),
+        ),
+        videotoolbox=VideotoolboxEncoderConfig(
+            codec=vt_raw["codec"],
+            quality=int(vt_raw["quality"]),
+            realtime=bool(vt_raw.get("realtime", False)),
+            scale_filter=vt_raw["scale_filter"],
+            extra_args=list(vt_raw.get("extra_args", [])),
+        ),
+    )
+
+
 def _build_config(data: dict[str, Any]) -> AppConfig:
     v = data["video"]
     a = data["audio"]
@@ -60,14 +96,13 @@ def _build_config(data: dict[str, Any]) -> AppConfig:
 
     return AppConfig(
         video=VideoConfig(
-            codec=v["codec"],
-            preset=v["preset"],
-            crf=int(v["crf"]),
             pix_fmt=v["pix_fmt"],
             max_height=int(v["max_height"]),
             max_fps=float(v["max_fps"]),
             sc_threshold=int(v["sc_threshold"]),
             closed_gop=bool(v["closed_gop"]),
+            encoder_preference=list(v.get("encoder_preference", ["cpu"])),
+            encoders=_parse_encoder_configs(v["encoders"]),
             profiles=_parse_profiles(v.get("profiles", {})),
         ),
         audio=AudioConfig(
@@ -102,7 +137,7 @@ def load_config(
     # Apply CLI overrides
     if cli_overrides:
         if "crf" in cli_overrides:
-            data["video"]["crf"] = cli_overrides["crf"]
+            data["video"]["encoders"]["cpu"]["crf"] = cli_overrides["crf"]
         if "segment_duration" in cli_overrides:
             data["packaging"]["segment_duration"] = cli_overrides["segment_duration"]
 

@@ -31,6 +31,7 @@ from hlspkg.storage import resolve_storage
 @click.option("--config", "config_path", default=None, type=click.Path(exists=True, path_type=Path), help="Override config YAML.")
 @click.option("--crf", default=None, type=int, help="Override video CRF value.")
 @click.option("--segment-duration", default=None, type=int, help="Override segment duration (seconds).")
+@click.option("--cpu", "force_cpu", is_flag=True, help="Force CPU encoding (skip GPU auto-detection).")
 @click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
 def main(
     input_key: str,
@@ -41,6 +42,7 @@ def main(
     config_path: Path | None,
     crf: int | None,
     segment_duration: int | None,
+    force_cpu: bool,
     verbose: bool,
 ) -> None:
     """Transcode and package a video as CMAF HLS for VOD streaming."""
@@ -81,6 +83,7 @@ def main(
             config=config,
             asset_id=asset_id,
             version=version,
+            force_cpu=force_cpu,
         )
 
         click.echo(f"Done: {result}")

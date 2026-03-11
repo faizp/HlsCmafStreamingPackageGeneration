@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from hlspkg.config.schema import AppConfig
+from hlspkg.core.encoder import detect_encoder
 from hlspkg.core.package import package
 from hlspkg.core.preflight import build_encoding_plan, probe_input
 from hlspkg.core.transcode import transcode
@@ -24,10 +25,14 @@ def run_pipeline(
     config: AppConfig,
     asset_id: str | None = None,
     version: str = "v1",
+    force_cpu: bool = False,
 ) -> str:
     """Run the full VOD pipeline. Returns the published asset URL/path."""
     asset_id = asset_id or uuid.uuid4().hex[:12]
     log.info("Starting pipeline for %s (asset_id=%s, version=%s)", input_key, asset_id, version)
+
+    # Detect best available encoder
+    encoder = detect_encoder(config, force_cpu=force_cpu)
 
     with tempfile.TemporaryDirectory(prefix="hlspkg_") as tmp:
         work_dir = Path(tmp)
@@ -44,7 +49,9 @@ def run_pipeline(
 
         # 3. Transcode
         log.info("Transcoding...")
-        tc_output = transcode(source_path, probe, plan, config, work_dir / "transcode")
+        tc_output = transcode(
+            source_path, probe, plan, config, work_dir / "transcode", encoder
+        )
 
         # 4. Package
         log.info("Packaging CMAF HLS...")

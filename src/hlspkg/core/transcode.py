@@ -1,4 +1,4 @@
-"""Config-driven ffmpeg transcoding."""
+"""Config-driven ffmpeg transcoding with GPU encoder support."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from hlspkg.config.schema import AppConfig
+from hlspkg.core.encoder import EncoderType, ResolvedEncoder
 from hlspkg.exceptions import TranscodeError
 from hlspkg.ffutil import run_ffmpeg
 from hlspkg.models import EncodingPlan, ProbeResult, TranscodeOutput
@@ -13,37 +14,136 @@ from hlspkg.models import EncodingPlan, ProbeResult, TranscodeOutput
 log = logging.getLogger(__name__)
 
 
-def _build_video_filter(plan: EncodingPlan, config: AppConfig) -> str:
-    """Build the -vf filter chain."""
+def _build_input_flags(encoder: ResolvedEncoder, config: AppConfig) -> list[str]:
+    """Build hwaccel flags that go before -i (NVENC only)."""
+    if encoder.type == EncoderType.NVENC:
+        nvenc = config.video.encoders.nvenc
+        return [
+            "-hwaccel", nvenc.hwaccel,
+            "-hwaccel_output_format", nvenc.hwaccel_output_format,
+        ]
+    return []
+
+
+def _build_encoder_args(
+    plan: EncodingPlan, config: AppConfig, encoder: ResolvedEncoder,
+) -> list[str]:
+    """Build codec-specific encoding flags."""
+    args: list[str] = []
+
+    if encoder.type == EncoderType.CPU:
+        cpu = config.video.encoders.cpu
+        args.extend([
+            "-c:v", cpu.codec,
+            "-preset", cpu.preset,
+            "-crf", str(plan.crf),
+        ])
+
+    elif encoder.type == EncoderType.NVENC:
+        nvenc = config.video.encoders.nvenc
+        args.extend([
+            "-c:v", nvenc.codec,
+            "-preset", nvenc.preset,
+            "-rc", nvenc.rc,
+            "-cq", str(nvenc.cq),
+        ])
+        if nvenc.extra_args:
+            args.extend(nvenc.extra_args)
+
+    elif encoder.type == EncoderType.VIDEOTOOLBOX:
+        vt = config.video.encoders.videotoolbox
+        args.extend([
+            "-c:v", vt.codec,
+            "-q:v", str(vt.quality),
+        ])
+        if not vt.realtime:
+            args.extend(["-realtime", "false"])
+        if vt.extra_args:
+            args.extend(vt.extra_args)
+
+    return args
+
+
+def _build_video_filter(
+    plan: EncodingPlan, config: AppConfig, encoder: ResolvedEncoder,
+) -> str:
+    """Build the -vf filter chain, using the correct scale filter for the encoder."""
     filters: list[str] = []
-    if plan.needs_scale:
-        filters.append(f"scale={plan.target_width}:{plan.target_height}")
-    if plan.needs_fps_cap:
-        filters.append(f"fps={plan.target_fps}")
-    filters.append(f"format={config.video.pix_fmt}")
-    return ",".join(filters)
+
+    if encoder.type == EncoderType.NVENC:
+        scale_filter = config.video.encoders.nvenc.scale_filter
+        # NVENC with fps cap: use CPU filters to avoid mixed filter graph
+        if plan.needs_fps_cap:
+            # Must download from GPU, filter on CPU, then re-upload
+            if plan.needs_scale:
+                filters.append(
+                    f"hwdownload,format=nv12,"
+                    f"scale={plan.target_width}:{plan.target_height},"
+                    f"fps={plan.target_fps},"
+                    f"format={config.video.pix_fmt},"
+                    f"hwupload_cuda"
+                )
+            else:
+                filters.append(
+                    f"hwdownload,format=nv12,"
+                    f"fps={plan.target_fps},"
+                    f"format={config.video.pix_fmt},"
+                    f"hwupload_cuda"
+                )
+        else:
+            if plan.needs_scale:
+                filters.append(
+                    f"{scale_filter}={plan.target_width}:{plan.target_height}"
+                )
+            # format conversion happens on GPU side via hwaccel_output_format
+    else:
+        if encoder.type == EncoderType.VIDEOTOOLBOX:
+            scale_filter = config.video.encoders.videotoolbox.scale_filter
+        else:
+            scale_filter = "scale"
+
+        if plan.needs_scale:
+            filters.append(f"{scale_filter}={plan.target_width}:{plan.target_height}")
+        if plan.needs_fps_cap:
+            filters.append(f"fps={plan.target_fps}")
+        filters.append(f"format={config.video.pix_fmt}")
+
+    return ",".join(filters) if filters else f"format={config.video.pix_fmt}"
 
 
 def build_video_args(
-    input_path: Path, plan: EncodingPlan, config: AppConfig, output_path: Path
+    input_path: Path,
+    plan: EncodingPlan,
+    config: AppConfig,
+    output_path: Path,
+    encoder: ResolvedEncoder,
 ) -> list[str]:
     """Build ffmpeg args for video-only transcoding."""
-    vf = _build_video_filter(plan, config)
-    args = [
-        "-i", str(input_path),
-        "-an",
-        "-vf", vf,
-        "-c:v", config.video.codec,
-        "-preset", config.video.preset,
-        "-crf", str(plan.crf),
-        "-maxrate", plan.maxrate,
-        "-bufsize", plan.bufsize,
+    vf = _build_video_filter(plan, config, encoder)
+
+    args: list[str] = []
+    # hwaccel flags must come before -i
+    args.extend(_build_input_flags(encoder, config))
+    args.extend(["-i", str(input_path)])
+    args.append("-an")
+    args.extend(["-vf", vf])
+
+    # Codec-specific encoder args
+    args.extend(_build_encoder_args(plan, config, encoder))
+
+    # Rate control (maxrate/bufsize apply to all encoders)
+    args.extend(["-maxrate", plan.maxrate, "-bufsize", plan.bufsize])
+
+    # GOP settings
+    args.extend([
         "-g", str(plan.keyint),
         "-keyint_min", str(plan.keyint),
         "-sc_threshold", str(config.video.sc_threshold),
-    ]
+    ])
+
     if config.video.closed_gop:
         args.extend(["-flags", "+cgop"])
+
     args.extend(["-movflags", "+faststart", str(output_path)])
     return args
 
@@ -64,16 +164,39 @@ def build_audio_args(
 
 
 def transcode(
-    input_path: Path, probe: ProbeResult, plan: EncodingPlan,
-    config: AppConfig, work_dir: Path,
+    input_path: Path,
+    probe: ProbeResult,
+    plan: EncodingPlan,
+    config: AppConfig,
+    work_dir: Path,
+    encoder: ResolvedEncoder,
 ) -> TranscodeOutput:
-    """Transcode video (and optionally audio) to intermediate files."""
+    """Transcode video (and optionally audio) to intermediate files.
+
+    If a GPU encoder fails at runtime, automatically retries with CPU.
+    """
     work_dir.mkdir(parents=True, exist_ok=True)
 
     video_out = work_dir / "video.mp4"
-    log.info("Transcoding video → %s", video_out)
-    video_args = build_video_args(input_path, plan, config, video_out)
-    run_ffmpeg(video_args, error_cls=TranscodeError)
+    log.info("Transcoding video → %s (encoder=%s)", video_out, encoder.name)
+    video_args = build_video_args(input_path, plan, config, video_out, encoder)
+
+    try:
+        run_ffmpeg(video_args, error_cls=TranscodeError)
+    except TranscodeError:
+        if encoder.is_gpu:
+            log.warning(
+                "GPU encoder %s failed at runtime, falling back to CPU", encoder.name
+            )
+            cpu_encoder = ResolvedEncoder(
+                type=EncoderType.CPU, is_gpu=False, name="CPU"
+            )
+            video_args = build_video_args(
+                input_path, plan, config, video_out, cpu_encoder
+            )
+            run_ffmpeg(video_args, error_cls=TranscodeError)
+        else:
+            raise
 
     audio_out: Path | None = None
     if probe.has_audio:
