@@ -1,0 +1,33 @@
+video:
+  codec: libx264
+  preset: medium
+  crf: 23
+  pix_fmt: yuv420p
+  max_height: 1080
+  max_fps: 30
+  profiles:
+    1080:
+      maxrate: "4500k"
+      bufsize: "9000k"
+    720:
+      maxrate: "3000k"
+      bufsize: "6000k"
+    default:
+      maxrate: "1500k"
+      bufsize: "3000k"
+  sc_threshold: 0
+  closed_gop: true
+
+audio:
+  codec: aac
+  bitrate: "128k"
+  channels: 2
+  sample_rate: 48000
+
+packaging:
+  segment_duration: 4
+  segment_type: fmp4
+  hls_version: 7
+
+output:
+  layout: "vod/{asset_id}/{version}"

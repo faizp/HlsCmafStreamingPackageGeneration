@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hlspkg"
+version = "0.1.0"
+description = "Single-rendition VOD pipeline: transcode + CMAF HLS packaging"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.1",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+s3 = ["boto3>=1.34"]
+
+[project.scripts]
+hlspkg = "hlspkg.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hlspkg"]

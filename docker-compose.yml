@@ -1,0 +1,11 @@
+services:
+  hlspkg:
+    build: .
+    volumes:
+      - ./data/input:/data/input
+      - ./data/output:/data/output
+      - ./config:/app/config
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_DEFAULT_REGION
