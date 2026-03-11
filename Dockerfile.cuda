@@ -9,10 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         software-properties-common curl xz-utils \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y --no-install-recommends \
-        python3.12 python3.12-venv python3.12-dev python3-pip \
+        python3.12 python3.12-venv python3.12-dev \
     && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
     && ln -sf /usr/bin/python3.12 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
+
+# Bootstrap pip via Python 3.12's own ensurepip (avoids stale system pip)
+RUN python3.12 -m ensurepip --upgrade \
+    && python3.12 -m pip install --no-cache-dir --upgrade pip
 
 # Install ffmpeg static build with NVENC support (BtbN GPL build)
 RUN curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
@@ -23,6 +27,6 @@ COPY pyproject.toml .
 COPY src/ src/
 COPY config/ config/
 
-RUN python3.12 -m pip install --no-cache-dir --break-system-packages .
+RUN python3.12 -m pip install --no-cache-dir .
 
 ENTRYPOINT ["hlspkg"]
