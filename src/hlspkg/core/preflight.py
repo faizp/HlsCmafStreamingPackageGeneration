@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 from fractions import Fraction
 from pathlib import Path
 
@@ -35,7 +36,7 @@ def probe_input(path: Path) -> ProbeResult:
     duration_str = data.get("format", {}).get("duration", "0")
     duration = float(duration_str) if duration_str else 0.0
 
-    return ProbeResult(
+    probe = ProbeResult(
         width=int(video_stream["width"]),
         height=int(video_stream["height"]),
         fps=fps,
@@ -49,6 +50,41 @@ def probe_input(path: Path) -> ProbeResult:
             int(audio_stream["sample_rate"]) if audio_stream else None
         ),
     )
+
+    log.info(
+        "Source: %dx%d, %.2f fps, codec=%s, duration=%.1fs",
+        probe.width, probe.height, probe.fps, probe.codec_name, probe.duration,
+    )
+
+    # Quick decode check — try to read a few frames to verify the codec is supported
+    _verify_decoder(path, probe.codec_name)
+
+    return probe
+
+
+def _verify_decoder(path: Path, codec_name: str) -> None:
+    """Decode a few frames to confirm ffmpeg can handle the input codec."""
+    cmd = [
+        "ffmpeg", "-hide_banner", "-y",
+        "-i", str(path),
+        "-frames:v", "1",
+        "-f", "null", "-",
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr or ""
+        raise PreflightError(
+            f"Cannot decode input (codec={codec_name}). "
+            f"This ffmpeg build may lack the required decoder. "
+            f"For AV1 sources, rebuild ffmpeg with --enable-libdav1d.\n"
+            f"ffmpeg stderr: {stderr[-500:]}"
+        ) from exc
+    except subprocess.TimeoutExpired:
+        raise PreflightError(
+            f"Decoder check timed out for codec={codec_name}. "
+            f"The input may be corrupt or the decoder is too slow."
+        )
 
 
 def _lookup_profile(height: int, config: AppConfig) -> tuple[str, str]:
