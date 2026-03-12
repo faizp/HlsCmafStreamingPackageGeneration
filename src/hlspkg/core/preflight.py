@@ -174,18 +174,22 @@ def build_encoding_plans(
         return [build_encoding_plan(probe, config)]
 
     source_height = probe.height
+    max_height = config.video.max_height
 
-    # Filter out heights > source (no upscaling)
-    valid = sorted([h for h in renditions if h <= source_height], reverse=True)
+    # Cap at max_height (no upscaling past source either)
+    top_height = min(source_height, max_height)
 
-    # Always include source native height as top rendition, but skip if
-    # the highest ladder entry is within 5% (e.g. 1090p source ≈ 1080p)
+    # Filter ladder entries: no upscaling past source, respect max_height
+    valid = sorted([h for h in renditions if h <= top_height], reverse=True)
+
+    # Include top_height as the highest rendition, but skip if the
+    # highest ladder entry is within 5% (e.g. 1090p source ≈ 1080p)
     _MIN_GAP_RATIO = 0.05
-    if valid and abs(valid[0] - source_height) / source_height <= _MIN_GAP_RATIO:
+    if valid and abs(valid[0] - top_height) / top_height <= _MIN_GAP_RATIO:
         # Close enough — use the ladder entry as the top rendition
         pass
-    elif not valid or valid[0] != source_height:
-        valid.insert(0, source_height)
+    elif not valid or valid[0] != top_height:
+        valid.insert(0, top_height)
 
     log.info(
         "ABR rendition ladder: %s (source=%dp)",
