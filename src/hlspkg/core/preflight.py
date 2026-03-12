@@ -115,3 +115,77 @@ def build_encoding_plan(probe: ProbeResult, config: AppConfig) -> EncodingPlan:
         needs_scale=needs_scale,
         needs_fps_cap=needs_fps_cap,
     )
+
+
+def _build_plan_for_height(
+    height: int, probe: ProbeResult, config: AppConfig,
+) -> EncodingPlan:
+    """Build an EncodingPlan for a specific target height."""
+    target_height = height - (height % 2)
+
+    scale_factor = target_height / probe.height
+    target_width = round(probe.width * scale_factor)
+    target_width = target_width + (target_width % 2)
+
+    needs_scale = target_height != probe.height
+
+    target_fps = min(probe.fps, config.video.max_fps)
+    needs_fps_cap = target_fps < probe.fps
+
+    maxrate, bufsize = _lookup_profile(target_height, config)
+    keyint = round(target_fps * config.packaging.segment_duration)
+
+    log.info(
+        "Encoding plan [%dp]: %dx%d @ %.2f fps, crf=%d, maxrate=%s, gop=%d%s%s",
+        target_height,
+        target_width,
+        target_height,
+        target_fps,
+        config.video.crf,
+        maxrate,
+        keyint,
+        " (scaled)" if needs_scale else "",
+        " (fps capped)" if needs_fps_cap else "",
+    )
+
+    return EncodingPlan(
+        target_width=target_width,
+        target_height=target_height,
+        target_fps=target_fps,
+        crf=config.video.crf,
+        maxrate=maxrate,
+        bufsize=bufsize,
+        keyint=keyint,
+        needs_scale=needs_scale,
+        needs_fps_cap=needs_fps_cap,
+    )
+
+
+def build_encoding_plans(
+    probe: ProbeResult, config: AppConfig,
+) -> list[EncodingPlan]:
+    """Build encoding plans for ABR renditions.
+
+    If no renditions configured, falls back to single-rendition via
+    build_encoding_plan().
+    """
+    renditions = config.video.renditions
+    if not renditions:
+        return [build_encoding_plan(probe, config)]
+
+    source_height = probe.height
+
+    # Filter out heights > source (no upscaling)
+    valid = sorted([h for h in renditions if h <= source_height], reverse=True)
+
+    # Always include source native height as top rendition
+    if not valid or valid[0] != source_height:
+        valid.insert(0, source_height)
+
+    log.info(
+        "ABR rendition ladder: %s (source=%dp)",
+        [f"{h}p" for h in valid],
+        source_height,
+    )
+
+    return [_build_plan_for_height(h, probe, config) for h in valid]

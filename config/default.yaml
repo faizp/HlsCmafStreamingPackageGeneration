@@ -4,6 +4,7 @@ video:
   max_fps: 30
   sc_threshold: 0
   closed_gop: true
+  renditions: [1080, 720, 480]
   profiles:
     1080:
       maxrate: "4500k"
@@ -11,9 +12,12 @@ video:
     720:
       maxrate: "3000k"
       bufsize: "6000k"
-    default:
+    480:
       maxrate: "1500k"
       bufsize: "3000k"
+    default:
+      maxrate: "1000k"
+      bufsize: "2000k"
   encoder_preference: [nvenc, videotoolbox, cpu]
   encoders:
     cpu:

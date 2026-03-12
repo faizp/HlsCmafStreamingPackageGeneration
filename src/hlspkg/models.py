@@ -41,7 +41,7 @@ class EncodingPlan:
 class TranscodeOutput:
     """Paths to transcoded elementary streams."""
 
-    video_path: Path
+    video_paths: list[Path] = field(default_factory=list)
     audio_path: Path | None = None
 
 

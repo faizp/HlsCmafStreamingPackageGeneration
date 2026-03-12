@@ -56,6 +56,7 @@ class VideoConfig:
     encoder_preference: list[str]
     encoders: EncodersConfig
     profiles: dict[int, VideoProfile] = field(default_factory=dict)
+    renditions: list[int] = field(default_factory=list)
 
     @property
     def crf(self) -> int:

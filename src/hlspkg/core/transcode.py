@@ -100,11 +100,14 @@ def build_video_args(
     args.extend(["-maxrate", plan.maxrate, "-bufsize", plan.bufsize])
 
     # GOP settings
-    args.extend([
-        "-g", str(plan.keyint),
-        "-keyint_min", str(plan.keyint),
-        "-sc_threshold", str(config.video.sc_threshold),
-    ])
+    args.extend(["-g", str(plan.keyint), "-keyint_min", str(plan.keyint)])
+
+    if encoder.type == EncoderType.NVENC:
+        # NVENC: -strict_gop enforces fixed GOP, -forced_idr ensures IDR at GOP boundary
+        args.extend(["-strict_gop", "1", "-forced_idr", "1"])
+    else:
+        # libx264 / VideoToolbox: sc_threshold=0 disables scene-change keyframes
+        args.extend(["-sc_threshold", str(config.video.sc_threshold)])
 
     if config.video.closed_gop:
         args.extend(["-flags", "+cgop"])
@@ -170,4 +173,58 @@ def transcode(
         audio_args = build_audio_args(input_path, config, audio_out)
         run_ffmpeg(audio_args, error_cls=TranscodeError)
 
-    return TranscodeOutput(video_path=video_out, audio_path=audio_out)
+    return TranscodeOutput(video_paths=[video_out], audio_path=audio_out)
+
+
+def transcode_abr(
+    input_path: Path,
+    probe: ProbeResult,
+    plans: list[EncodingPlan],
+    config: AppConfig,
+    work_dir: Path,
+    encoder: ResolvedEncoder,
+) -> TranscodeOutput:
+    """Transcode multiple renditions for ABR streaming.
+
+    Each rendition is transcoded sequentially (NVENC-safe).
+    Audio is transcoded once and shared across all renditions.
+    """
+    work_dir.mkdir(parents=True, exist_ok=True)
+    video_paths: list[Path] = []
+
+    for plan in plans:
+        video_out = work_dir / f"video_{plan.target_height}p.mp4"
+        log.info(
+            "Transcoding video [%dp] → %s (encoder=%s)",
+            plan.target_height, video_out, encoder.name,
+        )
+        video_args = build_video_args(input_path, plan, config, video_out, encoder)
+
+        try:
+            run_ffmpeg(video_args, error_cls=TranscodeError)
+        except TranscodeError:
+            if encoder.is_gpu:
+                log.warning(
+                    "GPU encoder %s failed for %dp, falling back to CPU",
+                    encoder.name, plan.target_height,
+                )
+                cpu_encoder = ResolvedEncoder(
+                    type=EncoderType.CPU, is_gpu=False, name="CPU",
+                )
+                video_args = build_video_args(
+                    input_path, plan, config, video_out, cpu_encoder,
+                )
+                run_ffmpeg(video_args, error_cls=TranscodeError)
+            else:
+                raise
+
+        video_paths.append(video_out)
+
+    audio_out: Path | None = None
+    if probe.has_audio:
+        audio_out = work_dir / "audio.m4a"
+        log.info("Transcoding audio → %s", audio_out)
+        audio_args = build_audio_args(input_path, config, audio_out)
+        run_ffmpeg(audio_args, error_cls=TranscodeError)
+
+    return TranscodeOutput(video_paths=video_paths, audio_path=audio_out)

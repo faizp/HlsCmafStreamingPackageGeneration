@@ -10,8 +10,8 @@ from pathlib import Path
 from hlspkg.config.schema import AppConfig
 from hlspkg.core.encoder import detect_encoder
 from hlspkg.core.package import package
-from hlspkg.core.preflight import build_encoding_plan, probe_input
-from hlspkg.core.transcode import transcode
+from hlspkg.core.preflight import build_encoding_plans, probe_input
+from hlspkg.core.transcode import transcode_abr
 from hlspkg.publish.publisher import publish
 from hlspkg.storage.base import StorageBackend
 
@@ -45,12 +45,12 @@ def run_pipeline(
         # 2. Preflight
         log.info("Probing input...")
         probe = probe_input(source_path)
-        plan = build_encoding_plan(probe, config)
+        plans = build_encoding_plans(probe, config)
 
         # 3. Transcode
-        log.info("Transcoding...")
-        tc_output = transcode(
-            source_path, probe, plan, config, work_dir / "transcode", encoder
+        log.info("Transcoding %d rendition(s)...", len(plans))
+        tc_output = transcode_abr(
+            source_path, probe, plans, config, work_dir / "transcode", encoder
         )
 
         # 4. Package

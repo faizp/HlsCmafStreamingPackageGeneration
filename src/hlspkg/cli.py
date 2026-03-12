@@ -31,6 +31,7 @@ from hlspkg.storage import resolve_storage
 @click.option("--config", "config_path", default=None, type=click.Path(exists=True, path_type=Path), help="Override config YAML.")
 @click.option("--crf", default=None, type=int, help="Override video CRF value.")
 @click.option("--segment-duration", default=None, type=int, help="Override segment duration (seconds).")
+@click.option("--renditions", default=None, type=str, help="Comma-separated rendition heights (e.g. '1080,720,480').")
 @click.option("--cpu", "force_cpu", is_flag=True, help="Force CPU encoding (skip GPU auto-detection).")
 @click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
 def main(
@@ -42,6 +43,7 @@ def main(
     config_path: Path | None,
     crf: int | None,
     segment_duration: int | None,
+    renditions: str | None,
     force_cpu: bool,
     verbose: bool,
 ) -> None:
@@ -57,6 +59,8 @@ def main(
         cli_overrides["crf"] = crf
     if segment_duration is not None:
         cli_overrides["segment_duration"] = segment_duration
+    if renditions is not None:
+        cli_overrides["renditions"] = [int(h.strip()) for h in renditions.split(",")]
 
     try:
         config = load_config(

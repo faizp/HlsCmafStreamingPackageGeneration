@@ -104,6 +104,7 @@ def _build_config(data: dict[str, Any]) -> AppConfig:
             encoder_preference=list(v.get("encoder_preference", ["cpu"])),
             encoders=_parse_encoder_configs(v["encoders"]),
             profiles=_parse_profiles(v.get("profiles", {})),
+            renditions=[int(h) for h in v.get("renditions", [])],
         ),
         audio=AudioConfig(
             codec=a["codec"],
@@ -140,5 +141,7 @@ def load_config(
             data["video"]["encoders"]["cpu"]["crf"] = cli_overrides["crf"]
         if "segment_duration" in cli_overrides:
             data["packaging"]["segment_duration"] = cli_overrides["segment_duration"]
+        if "renditions" in cli_overrides:
+            data["video"]["renditions"] = cli_overrides["renditions"]
 
     return _build_config(data)

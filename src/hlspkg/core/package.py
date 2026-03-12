@@ -49,20 +49,30 @@ def package(
 
     seg_dur = config.packaging.segment_duration
 
-    video_dir = hls_dir / "stream_video"
-    video_dir.mkdir(parents=True, exist_ok=True)
-
     stream_descriptors: list[str] = []
 
-    # Video stream descriptor
-    video_desc = (
-        f"in={tc_output.video_path},"
-        f"stream=video,"
-        f"init_segment={video_dir / 'init.mp4'},"
-        f"segment_template={video_dir / 'seg_$Number$.m4s'},"
-        f"playlist_name={video_dir / 'stream.m3u8'}"
-    )
-    stream_descriptors.append(video_desc)
+    # Video stream descriptors (one per rendition)
+    for video_path in tc_output.video_paths:
+        # Derive rendition label from filename: video_720p.mp4 → 720p, video.mp4 → video
+        stem = video_path.stem
+        if stem.startswith("video_"):
+            label = stem.replace("video_", "")
+            dir_name = f"stream_video_{label}"
+        else:
+            dir_name = "stream_video"
+            label = "video"
+
+        video_dir = hls_dir / dir_name
+        video_dir.mkdir(parents=True, exist_ok=True)
+
+        video_desc = (
+            f"in={video_path},"
+            f"stream=video,"
+            f"init_segment={video_dir / 'init.mp4'},"
+            f"segment_template={video_dir / 'seg_$Number$.m4s'},"
+            f"playlist_name={video_dir / 'stream.m3u8'}"
+        )
+        stream_descriptors.append(video_desc)
 
     # Audio stream descriptor (if present)
     if tc_output.audio_path is not None:
