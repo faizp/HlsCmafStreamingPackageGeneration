@@ -218,7 +218,12 @@ def _build_split_args(
     output_paths: list[Path],
     encoder: ResolvedEncoder,
 ) -> list[str]:
-    """Build ffmpeg args for single-decode, multi-output ABR transcoding."""
+    """Build ffmpeg args for single-decode, multi-output ABR transcoding.
+
+    Each output file has exactly one video stream, so per-output options
+    use plain ``-c:v`` (not ``-c:v:N``).  Options are placed between
+    ``-map`` and the output filename so they apply to that output only.
+    """
     fc = _build_split_filter(plans, config, encoder)
 
     args: list[str] = ["-i", str(input_path), "-an", "-filter_complex", fc]
@@ -226,29 +231,29 @@ def _build_split_args(
     for i, (plan, out_path) in enumerate(zip(plans, output_paths)):
         args.extend(["-map", f"[out{i}]"])
 
-        # Codec-specific encoder args
+        # Codec-specific encoder args (per-output, no stream index)
         if encoder.type == EncoderType.CPU:
             cpu = config.video.encoders.cpu
             args.extend([
-                f"-c:v:{i}", cpu.codec,
-                f"-preset:v:{i}", cpu.preset,
-                f"-crf:v:{i}", str(plan.crf),
+                "-c:v", cpu.codec,
+                "-preset", cpu.preset,
+                "-crf", str(plan.crf),
             ])
         elif encoder.type == EncoderType.NVENC:
             nvenc = config.video.encoders.nvenc
             args.extend([
-                f"-c:v:{i}", nvenc.codec,
-                f"-preset:v:{i}", nvenc.preset,
-                f"-rc:v:{i}", nvenc.rc,
-                f"-cq:v:{i}", str(nvenc.cq),
+                "-c:v", nvenc.codec,
+                "-preset", nvenc.preset,
+                "-rc", nvenc.rc,
+                "-cq", str(nvenc.cq),
             ])
             if nvenc.extra_args:
                 args.extend(nvenc.extra_args)
         elif encoder.type == EncoderType.VIDEOTOOLBOX:
             vt = config.video.encoders.videotoolbox
             args.extend([
-                f"-c:v:{i}", vt.codec,
-                f"-q:v:{i}", str(vt.quality),
+                "-c:v", vt.codec,
+                "-q:v", str(vt.quality),
             ])
             if not vt.realtime:
                 args.extend(["-realtime", "false"])
@@ -256,24 +261,18 @@ def _build_split_args(
                 args.extend(vt.extra_args)
 
         # Rate control
-        args.extend([
-            f"-maxrate:v:{i}", plan.maxrate,
-            f"-bufsize:v:{i}", plan.bufsize,
-        ])
+        args.extend(["-maxrate", plan.maxrate, "-bufsize", plan.bufsize])
 
         # GOP settings
-        args.extend([
-            f"-g:v:{i}", str(plan.keyint),
-            f"-keyint_min:v:{i}", str(plan.keyint),
-        ])
+        args.extend(["-g", str(plan.keyint), "-keyint_min", str(plan.keyint)])
 
         if encoder.type == EncoderType.NVENC:
-            args.extend([f"-strict_gop:v:{i}", "1"])
+            args.extend(["-strict_gop", "1"])
         else:
-            args.extend([f"-sc_threshold:v:{i}", str(config.video.sc_threshold)])
+            args.extend(["-sc_threshold", str(config.video.sc_threshold)])
 
         if config.video.closed_gop:
-            args.extend([f"-flags:v:{i}", "+cgop"])
+            args.extend(["-flags", "+cgop"])
 
         args.extend(["-movflags", "+faststart", str(out_path)])
 
