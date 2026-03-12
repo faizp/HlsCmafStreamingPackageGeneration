@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from hlspkg.config.schema import AppConfig
@@ -191,17 +192,26 @@ def transcode_abr(
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     video_paths: list[Path] = []
+    total = len(plans)
+    abr_start = time.monotonic()
 
-    for plan in plans:
+    for idx, plan in enumerate(plans, 1):
         video_out = work_dir / f"video_{plan.target_height}p.mp4"
         log.info(
-            "Transcoding video [%dp] → %s (encoder=%s)",
-            plan.target_height, video_out, encoder.name,
+            "[%d/%d] Transcoding video %dp → %s (encoder=%s)",
+            idx, total, plan.target_height, video_out, encoder.name,
         )
         video_args = build_video_args(input_path, plan, config, video_out, encoder)
+        t0 = time.monotonic()
+
+        dur = probe.duration
+        lbl = f"[{idx}/{total}] {plan.target_height}p"
 
         try:
-            run_ffmpeg(video_args, error_cls=TranscodeError)
+            run_ffmpeg(
+                video_args, error_cls=TranscodeError,
+                duration=dur, label=lbl,
+            )
         except TranscodeError:
             if encoder.is_gpu:
                 log.warning(
@@ -214,17 +224,35 @@ def transcode_abr(
                 video_args = build_video_args(
                     input_path, plan, config, video_out, cpu_encoder,
                 )
-                run_ffmpeg(video_args, error_cls=TranscodeError)
+                run_ffmpeg(
+                    video_args, error_cls=TranscodeError,
+                    duration=dur, label=lbl,
+                )
             else:
                 raise
 
+        elapsed = time.monotonic() - t0
+        log.info(
+            "[%d/%d] %dp done in %.1fs",
+            idx, total, plan.target_height, elapsed,
+        )
         video_paths.append(video_out)
 
     audio_out: Path | None = None
     if probe.has_audio:
         audio_out = work_dir / "audio.m4a"
         log.info("Transcoding audio → %s", audio_out)
+        t0 = time.monotonic()
         audio_args = build_audio_args(input_path, config, audio_out)
-        run_ffmpeg(audio_args, error_cls=TranscodeError)
+        run_ffmpeg(
+            audio_args, error_cls=TranscodeError,
+            duration=probe.duration, label="audio",
+        )
+        log.info("Audio done in %.1fs", time.monotonic() - t0)
 
+    total_elapsed = time.monotonic() - abr_start
+    log.info(
+        "All %d rendition(s) + audio transcoded in %.1fs",
+        total, total_elapsed,
+    )
     return TranscodeOutput(video_paths=video_paths, audio_path=audio_out)
