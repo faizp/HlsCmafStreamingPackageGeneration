@@ -103,8 +103,8 @@ def build_video_args(
     args.extend(["-g", str(plan.keyint), "-keyint_min", str(plan.keyint)])
 
     if encoder.type == EncoderType.NVENC:
-        # NVENC: -strict_gop enforces fixed GOP, -forced_idr ensures IDR at GOP boundary
-        args.extend(["-strict_gop", "1", "-forced_idr", "1"])
+        # NVENC: -strict_gop enforces fixed GOP
+        args.extend(["-strict_gop", "1"])
     else:
         # libx264 / VideoToolbox: sc_threshold=0 disables scene-change keyframes
         args.extend(["-sc_threshold", str(config.video.sc_threshold)])

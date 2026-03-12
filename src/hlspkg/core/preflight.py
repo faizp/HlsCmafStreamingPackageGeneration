@@ -178,8 +178,13 @@ def build_encoding_plans(
     # Filter out heights > source (no upscaling)
     valid = sorted([h for h in renditions if h <= source_height], reverse=True)
 
-    # Always include source native height as top rendition
-    if not valid or valid[0] != source_height:
+    # Always include source native height as top rendition, but skip if
+    # the highest ladder entry is within 5% (e.g. 1090p source ≈ 1080p)
+    _MIN_GAP_RATIO = 0.05
+    if valid and abs(valid[0] - source_height) / source_height <= _MIN_GAP_RATIO:
+        # Close enough — use the ladder entry as the top rendition
+        pass
+    elif not valid or valid[0] != source_height:
         valid.insert(0, source_height)
 
     log.info(
