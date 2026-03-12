@@ -4,7 +4,7 @@ FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS ffmpeg-builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git build-essential nasm pkg-config \
+        git build-essential nasm pkg-config clang \
         libdav1d-dev libx264-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -23,6 +23,8 @@ RUN git clone --branch n7.0 --depth 1 \
         --enable-ffnvcodec \
         --enable-nvenc \
         --enable-cuda \
+        --enable-cuda-llvm \
+        --enable-cuvid \
         --enable-libdav1d \
         --enable-libx264 \
         --disable-doc \
