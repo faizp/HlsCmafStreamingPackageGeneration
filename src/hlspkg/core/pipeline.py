@@ -9,7 +9,12 @@ import uuid
 from pathlib import Path
 
 from hlspkg.config.schema import AppConfig
-from hlspkg.core.encoder import detect_encoder
+from hlspkg.core.encoder import (
+    EncoderType,
+    ResolvedEncoder,
+    check_hwaccel_decode,
+    detect_encoder,
+)
 from hlspkg.core.package import package
 from hlspkg.core.preflight import build_encoding_plans, probe_input
 from hlspkg.core.transcode import transcode_abr
@@ -55,6 +60,15 @@ def run_pipeline(
         log.info("Probing input...")
         probe = probe_input(source_path)
         plans = build_encoding_plans(probe, config)
+
+        # 2b. CUVID hardware decode detection
+        if encoder.is_gpu and encoder.type == EncoderType.NVENC:
+            if check_hwaccel_decode(probe.codec_name, source_path):
+                encoder = ResolvedEncoder(
+                    type=encoder.type, is_gpu=True, name=encoder.name,
+                    hwaccel_decode=True,
+                )
+                log.info("CUVID hardware decode enabled for %s", probe.codec_name)
 
         # 3. Transcode
         t0 = time.monotonic()

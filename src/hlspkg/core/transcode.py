@@ -59,22 +59,30 @@ def _build_video_filter(
 ) -> str:
     """Build the -vf filter chain.
 
-    All encoders (including NVENC) use CPU-side filters. NVENC accepts
-    CPU-memory frames and handles the upload to GPU internally, which
-    avoids fragile hwaccel/cuvid dependencies.
+    When hwaccel_decode is enabled, uses scale_cuda for GPU-side scaling
+    and format conversion.  Otherwise, CPU-side filters are used — NVENC
+    accepts CPU-memory frames and handles the upload internally.
     """
     filters: list[str] = []
 
-    if encoder.type == EncoderType.VIDEOTOOLBOX:
-        scale_filter = config.video.encoders.videotoolbox.scale_filter
+    if encoder.hwaccel_decode:
+        # scale_cuda does scaling + format conversion entirely on GPU
+        sf = config.video.encoders.nvenc.scale_filter
+        filters.append(
+            f"{sf}={plan.target_width}:{plan.target_height}:format={config.video.pix_fmt}"
+        )
+        # fps filter is CPU-only; fps capping handled by -r output option
     else:
-        scale_filter = "scale"
+        if encoder.type == EncoderType.VIDEOTOOLBOX:
+            scale_filter = config.video.encoders.videotoolbox.scale_filter
+        else:
+            scale_filter = "scale"
 
-    if plan.needs_scale:
-        filters.append(f"{scale_filter}={plan.target_width}:{plan.target_height}")
-    if plan.needs_fps_cap:
-        filters.append(f"fps={plan.target_fps}")
-    filters.append(f"format={config.video.pix_fmt}")
+        if plan.needs_scale:
+            filters.append(f"{scale_filter}={plan.target_width}:{plan.target_height}")
+        if plan.needs_fps_cap:
+            filters.append(f"fps={plan.target_fps}")
+        filters.append(f"format={config.video.pix_fmt}")
 
     return ",".join(filters)
 
@@ -90,6 +98,12 @@ def build_video_args(
     vf = _build_video_filter(plan, config, encoder)
 
     args: list[str] = []
+    if encoder.hwaccel_decode:
+        nvenc = config.video.encoders.nvenc
+        args.extend([
+            "-hwaccel", nvenc.hwaccel,
+            "-hwaccel_output_format", nvenc.hwaccel_output_format,
+        ])
     args.extend(["-i", str(input_path)])
     args.append("-an")
     args.extend(["-vf", vf])
@@ -112,6 +126,9 @@ def build_video_args(
 
     if config.video.closed_gop:
         args.extend(["-flags", "+cgop"])
+
+    if encoder.hwaccel_decode and plan.needs_fps_cap:
+        args.extend(["-r", str(int(plan.target_fps))])
 
     args.extend(["-movflags", "+faststart", str(output_path)])
     return args
@@ -153,7 +170,28 @@ def transcode(
     try:
         run_ffmpeg(video_args, error_cls=TranscodeError)
     except TranscodeError:
-        if encoder.is_gpu:
+        if encoder.hwaccel_decode:
+            log.warning("CUVID hardware decode failed, retrying with software decode")
+            sw_encoder = ResolvedEncoder(
+                type=encoder.type, is_gpu=True, name=encoder.name,
+            )
+            video_args = build_video_args(
+                input_path, plan, config, video_out, sw_encoder,
+            )
+            try:
+                run_ffmpeg(video_args, error_cls=TranscodeError)
+            except TranscodeError:
+                log.warning(
+                    "GPU encoder %s failed, falling back to CPU", encoder.name,
+                )
+                cpu_encoder = ResolvedEncoder(
+                    type=EncoderType.CPU, is_gpu=False, name="CPU",
+                )
+                video_args = build_video_args(
+                    input_path, plan, config, video_out, cpu_encoder,
+                )
+                run_ffmpeg(video_args, error_cls=TranscodeError)
+        elif encoder.is_gpu:
             log.warning(
                 "GPU encoder %s failed at runtime, falling back to CPU", encoder.name
             )
@@ -182,29 +220,42 @@ def _build_split_filter(
 ) -> str:
     """Build a -filter_complex string that splits the input into N renditions.
 
-    Example for 3 renditions:
+    When hwaccel_decode is enabled, uses scale_cuda for GPU-side scaling
+    and format conversion; fps capping is handled by -r output option.
+
+    Example (CPU):
       [0:v]split=3[s0][s1][s2];
-      [s0]scale=1920:1080,fps=30,format=yuv420p[out0];
-      [s1]scale=1280:720,fps=30,format=yuv420p[out1];
-      [s2]scale=854:480,fps=30,format=yuv420p[out2]
+      [s0]scale=1920:1080,fps=30,format=yuv420p[out0]; ...
+    Example (CUVID):
+      [0:v]split=3[s0][s1][s2];
+      [s0]scale_cuda=1920:1080:format=yuv420p[out0]; ...
     """
     n = len(plans)
     split_outputs = "".join(f"[s{i}]" for i in range(n))
     parts = [f"[0:v]split={n}{split_outputs}"]
 
-    if encoder.type == EncoderType.VIDEOTOOLBOX:
+    if encoder.hwaccel_decode:
+        scale_filter = config.video.encoders.nvenc.scale_filter
+    elif encoder.type == EncoderType.VIDEOTOOLBOX:
         scale_filter = config.video.encoders.videotoolbox.scale_filter
     else:
         scale_filter = "scale"
 
     for i, plan in enumerate(plans):
         filters: list[str] = []
-        # Always scale — even for the "native" rendition the split output
-        # needs an explicit size so each branch has a defined resolution.
-        filters.append(f"{scale_filter}={plan.target_width}:{plan.target_height}")
-        if plan.needs_fps_cap:
-            filters.append(f"fps={plan.target_fps}")
-        filters.append(f"format={config.video.pix_fmt}")
+        if encoder.hwaccel_decode:
+            # scale_cuda does scaling + format conversion on GPU
+            filters.append(
+                f"{scale_filter}={plan.target_width}:{plan.target_height}:format={config.video.pix_fmt}"
+            )
+            # fps filter is CPU-only; fps capping handled by -r output option
+        else:
+            # Always scale — even for the "native" rendition the split output
+            # needs an explicit size so each branch has a defined resolution.
+            filters.append(f"{scale_filter}={plan.target_width}:{plan.target_height}")
+            if plan.needs_fps_cap:
+                filters.append(f"fps={plan.target_fps}")
+            filters.append(f"format={config.video.pix_fmt}")
         chain = ",".join(filters)
         parts.append(f"[s{i}]{chain}[out{i}]")
 
@@ -226,7 +277,14 @@ def _build_split_args(
     """
     fc = _build_split_filter(plans, config, encoder)
 
-    args: list[str] = ["-i", str(input_path), "-an", "-filter_complex", fc]
+    args: list[str] = []
+    if encoder.hwaccel_decode:
+        nvenc = config.video.encoders.nvenc
+        args.extend([
+            "-hwaccel", nvenc.hwaccel,
+            "-hwaccel_output_format", nvenc.hwaccel_output_format,
+        ])
+    args.extend(["-i", str(input_path), "-an", "-filter_complex", fc])
 
     for i, (plan, out_path) in enumerate(zip(plans, output_paths)):
         args.extend(["-map", f"[out{i}]"])
@@ -274,6 +332,9 @@ def _build_split_args(
         if config.video.closed_gop:
             args.extend(["-flags", "+cgop"])
 
+        if encoder.hwaccel_decode and plan.needs_fps_cap:
+            args.extend(["-r", str(int(plan.target_fps))])
+
         args.extend(["-movflags", "+faststart", str(out_path)])
 
     return args
@@ -315,7 +376,36 @@ def transcode_abr(
             duration=probe.duration, label=f"video {rendition_labels}",
         )
     except TranscodeError:
-        if encoder.is_gpu:
+        if encoder.hwaccel_decode:
+            log.warning("CUVID hardware decode failed, retrying with software decode")
+            sw_encoder = ResolvedEncoder(
+                type=encoder.type, is_gpu=True, name=encoder.name,
+            )
+            split_args = _build_split_args(
+                input_path, plans, config, video_paths, sw_encoder,
+            )
+            try:
+                run_ffmpeg(
+                    split_args, error_cls=TranscodeError,
+                    duration=probe.duration,
+                    label=f"video {rendition_labels}",
+                )
+            except TranscodeError:
+                log.warning(
+                    "GPU encoder %s failed, falling back to CPU", encoder.name,
+                )
+                cpu_encoder = ResolvedEncoder(
+                    type=EncoderType.CPU, is_gpu=False, name="CPU",
+                )
+                split_args = _build_split_args(
+                    input_path, plans, config, video_paths, cpu_encoder,
+                )
+                run_ffmpeg(
+                    split_args, error_cls=TranscodeError,
+                    duration=probe.duration,
+                    label=f"video {rendition_labels} (CPU)",
+                )
+        elif encoder.is_gpu:
             log.warning(
                 "GPU split encode failed (%s), falling back to sequential CPU",
                 encoder.name,

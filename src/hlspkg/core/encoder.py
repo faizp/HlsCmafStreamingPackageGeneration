@@ -6,6 +6,7 @@ import enum
 import logging
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 from hlspkg.config.schema import AppConfig
 
@@ -23,6 +24,7 @@ class ResolvedEncoder:
     type: EncoderType
     is_gpu: bool
     name: str
+    hwaccel_decode: bool = False
 
 
 _ENCODER_MAP: dict[str, EncoderType] = {
@@ -35,6 +37,13 @@ _CODEC_FOR_TYPE: dict[EncoderType, str] = {
     EncoderType.NVENC: "h264_nvenc",
     EncoderType.VIDEOTOOLBOX: "h264_videotoolbox",
     EncoderType.CPU: "libx264",
+}
+
+_CUVID_DECODERS: dict[str, str] = {
+    "h264": "h264_cuvid",
+    "hevc": "hevc_cuvid",
+    "av1": "av1_cuvid",
+    "vp9": "vp9_cuvid",
 }
 
 
@@ -71,6 +80,32 @@ def _smoke_test_encoder(codec: str) -> bool:
         return True
     except subprocess.CalledProcessError as exc:
         log.debug("Smoke test for %s failed: %s", codec, exc.stderr.strip())
+        return False
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def check_hwaccel_decode(codec_name: str, source_path: Path) -> bool:
+    """Smoke-test CUVID hardware decoding with the actual source file.
+
+    CUVID support varies by codec AND resolution per GPU generation, so we
+    test with the real file rather than a synthetic source.
+    """
+    if codec_name not in _CUVID_DECODERS:
+        log.debug("No CUVID decoder for codec %s", codec_name)
+        return False
+
+    cmd = [
+        "ffmpeg", "-hide_banner", "-y",
+        "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+        "-i", str(source_path),
+        "-frames:v", "1", "-f", "null", "-",
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=True)
+        return True
+    except subprocess.CalledProcessError as exc:
+        log.debug("CUVID decode test failed for %s: %s", codec_name, exc.stderr.strip())
         return False
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
