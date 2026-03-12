@@ -66,10 +66,11 @@ def _build_video_filter(
     filters: list[str] = []
 
     if encoder.hwaccel_decode:
-        # scale_cuda does scaling + format conversion entirely on GPU
+        # scale_cuda does scaling + format conversion entirely on GPU;
+        # named params required (positional w:h:format= confuses the parser)
         sf = config.video.encoders.nvenc.scale_filter
         filters.append(
-            f"{sf}={plan.target_width}:{plan.target_height}:format={config.video.pix_fmt}"
+            f"{sf}=w={plan.target_width}:h={plan.target_height}:format={config.video.pix_fmt}"
         )
         # fps filter is CPU-only; fps capping handled by -r output option
     else:
@@ -244,9 +245,10 @@ def _build_split_filter(
     for i, plan in enumerate(plans):
         filters: list[str] = []
         if encoder.hwaccel_decode:
-            # scale_cuda does scaling + format conversion on GPU
+            # scale_cuda does scaling + format conversion on GPU;
+            # named params required (positional w:h:format= confuses the parser)
             filters.append(
-                f"{scale_filter}={plan.target_width}:{plan.target_height}:format={config.video.pix_fmt}"
+                f"{scale_filter}=w={plan.target_width}:h={plan.target_height}:format={config.video.pix_fmt}"
             )
             # fps filter is CPU-only; fps capping handled by -r output option
         else:
