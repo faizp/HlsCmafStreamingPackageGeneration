@@ -1,11 +1,14 @@
 video:
   pix_fmt: yuv420p
-  max_height: 1080
+  max_height: 1440
   max_fps: 30
   sc_threshold: 0
   closed_gop: true
-  renditions: [1080, 720, 480]
+  renditions: [1440, 1080, 720, 480]
   profiles:
+    1440:
+      maxrate: "9000k"
+      bufsize: "18000k"
     1080:
       maxrate: "4500k"
       bufsize: "9000k"
