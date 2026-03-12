@@ -30,31 +30,32 @@ def publish(
         rel = local_path.relative_to(pkg.base_dir)
         return f"{layout}/{rel}"
 
+    all_files = (
+        list(pkg.init_segments)
+        + list(pkg.segments)
+        + list(pkg.variant_playlists)
+        + [pkg.master_playlist]
+    )
+    total = len(all_files)
+
     try:
         # 1. Init segments first
         for init_seg in pkg.init_segments:
-            key = _dest_key(init_seg)
-            log.debug("Publishing init segment: %s", key)
-            storage.put_file(init_seg, key)
+            storage.put_file(init_seg, _dest_key(init_seg))
 
         # 2. Media segments
         for seg in pkg.segments:
-            key = _dest_key(seg)
-            log.debug("Publishing segment: %s", key)
-            storage.put_file(seg, key)
+            storage.put_file(seg, _dest_key(seg))
 
         # 3. Variant playlists
         for playlist in pkg.variant_playlists:
-            key = _dest_key(playlist)
-            log.debug("Publishing variant playlist: %s", key)
-            storage.put_file(playlist, key)
+            storage.put_file(playlist, _dest_key(playlist))
 
         # 4. Master playlist last (makes the asset "live")
-        master_key = _dest_key(pkg.master_playlist)
-        log.info("Publishing master playlist: %s", master_key)
-        storage.put_file(pkg.master_playlist, master_key)
+        storage.put_file(pkg.master_playlist, _dest_key(pkg.master_playlist))
 
     except Exception as exc:
         raise PublishError(f"Failed to publish: {exc}") from exc
 
+    log.debug("Published %d files to %s", total, storage.base_url(layout))
     return storage.base_url(layout)

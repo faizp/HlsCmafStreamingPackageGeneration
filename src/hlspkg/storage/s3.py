@@ -29,13 +29,11 @@ class S3Storage:
     def get_file(self, key: str, local_dest: Path) -> Path:
         full_key = self._full_key(key)
         local_dest.parent.mkdir(parents=True, exist_ok=True)
-        log.info("Downloading s3://%s/%s → %s", self._bucket, full_key, local_dest)
         self._s3.download_file(self._bucket, full_key, str(local_dest))
         return local_dest
 
     def put_file(self, local_path: Path, dest_key: str) -> str:
         full_key = self._full_key(dest_key)
-        log.info("Uploading %s → s3://%s/%s", local_path, self._bucket, full_key)
         self._s3.upload_file(str(local_path), self._bucket, full_key)
         return f"s3://{self._bucket}/{full_key}"
 
