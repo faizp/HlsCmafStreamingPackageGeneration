@@ -27,12 +27,12 @@ video:
     nvenc:
       codec: h264_nvenc
       preset: p5
-      cq: 23
+      cq: 20
       rc: vbr
       hwaccel: cuda
       hwaccel_output_format: cuda
       scale_filter: scale_cuda
-      extra_args: ["-spatial-aq", "1", "-temporal-aq", "1", "-aq-strength", "10"]
+      extra_args: ["-spatial-aq", "1", "-temporal-aq", "1", "-aq-strength", "13"]
     videotoolbox:
       codec: h264_videotoolbox
       quality: 65
