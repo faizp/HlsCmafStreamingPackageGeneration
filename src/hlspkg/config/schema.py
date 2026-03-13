@@ -27,6 +27,7 @@ class NvencEncoderConfig:
     hwaccel: str
     hwaccel_output_format: str
     scale_filter: str
+    scale_interp: str = "super"
     extra_args: list[str] = field(default_factory=list)
 
 

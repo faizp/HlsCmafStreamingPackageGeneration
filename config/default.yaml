@@ -34,7 +34,8 @@ video:
       rc: vbr
       hwaccel: cuda
       hwaccel_output_format: cuda
-      scale_filter: scale_cuda
+      scale_filter: scale_npp
+      scale_interp: super
       extra_args: ["-spatial-aq", "1", "-temporal-aq", "1", "-aq-strength", "13"]
     videotoolbox:
       codec: h264_videotoolbox

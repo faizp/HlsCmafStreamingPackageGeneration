@@ -59,18 +59,22 @@ def _build_video_filter(
 ) -> str:
     """Build the -vf filter chain.
 
-    When hwaccel_decode is enabled, uses scale_cuda for GPU-side scaling
-    and format conversion.  Otherwise, CPU-side filters are used — NVENC
-    accepts CPU-memory frames and handles the upload internally.
+    When hwaccel_decode is enabled, uses the configured GPU scale filter
+    (scale_npp or scale_cuda) for GPU-side scaling and format conversion.
+    Otherwise, CPU-side filters are used — NVENC accepts CPU-memory frames
+    and handles the upload internally.
     """
     filters: list[str] = []
 
     if encoder.hwaccel_decode:
-        # scale_cuda does scaling + format conversion entirely on GPU;
-        # named params required (positional w:h:format= confuses the parser)
-        sf = config.video.encoders.nvenc.scale_filter
+        # GPU-side scaling + format conversion; scale_npp with interp_algo=super
+        # provides area-averaged supersampling that properly anti-aliases
+        # aggressive downscales (e.g. 4K→480p) without aliasing/moiré.
+        nvenc = config.video.encoders.nvenc
+        sf = nvenc.scale_filter
+        interp = nvenc.scale_interp
         filters.append(
-            f"{sf}=w={plan.target_width}:h={plan.target_height}:format={config.video.pix_fmt}:interp_algo=lanczos"
+            f"{sf}=w={plan.target_width}:h={plan.target_height}:format={config.video.pix_fmt}:interp_algo={interp}"
         )
         # fps filter is CPU-only; fps capping handled by -r output option
     else:
@@ -221,15 +225,16 @@ def _build_split_filter(
 ) -> str:
     """Build a -filter_complex string that splits the input into N renditions.
 
-    When hwaccel_decode is enabled, uses scale_cuda for GPU-side scaling
-    and format conversion; fps capping is handled by -r output option.
+    When hwaccel_decode is enabled, uses the configured GPU scale filter
+    (scale_npp or scale_cuda) for GPU-side scaling and format conversion;
+    fps capping is handled by -r output option.
 
     Example (CPU):
       [0:v]split=3[s0][s1][s2];
       [s0]scale=1920:1080,fps=30,format=yuv420p[out0]; ...
     Example (CUVID):
       [0:v]split=3[s0][s1][s2];
-      [s0]scale_cuda=1920:1080:format=yuv420p[out0]; ...
+      [s0]scale_npp=w=1920:h=1080:format=yuv420p:interp_algo=super[out0]; ...
     """
     n = len(plans)
     split_outputs = "".join(f"[s{i}]" for i in range(n))
@@ -242,13 +247,13 @@ def _build_split_filter(
     else:
         scale_filter = "scale"
 
+    interp = config.video.encoders.nvenc.scale_interp
+
     for i, plan in enumerate(plans):
         filters: list[str] = []
         if encoder.hwaccel_decode:
-            # scale_cuda does scaling + format conversion on GPU;
-            # named params required (positional w:h:format= confuses the parser)
             filters.append(
-                f"{scale_filter}=w={plan.target_width}:h={plan.target_height}:format={config.video.pix_fmt}:interp_algo=lanczos"
+                f"{scale_filter}=w={plan.target_width}:h={plan.target_height}:format={config.video.pix_fmt}:interp_algo={interp}"
             )
             # fps filter is CPU-only; fps capping handled by -r output option
         else:

@@ -63,7 +63,10 @@ def run_pipeline(
 
         # 2b. CUVID hardware decode detection
         if encoder.is_gpu and encoder.type == EncoderType.NVENC:
-            if check_hwaccel_decode(probe.codec_name, source_path):
+            if check_hwaccel_decode(
+                probe.codec_name, source_path,
+                scale_filter=config.video.encoders.nvenc.scale_filter,
+            ):
                 encoder = ResolvedEncoder(
                     type=encoder.type, is_gpu=True, name=encoder.name,
                     hwaccel_decode=True,

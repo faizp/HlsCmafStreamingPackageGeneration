@@ -85,13 +85,15 @@ def _smoke_test_encoder(codec: str) -> bool:
         return False
 
 
-def check_hwaccel_decode(codec_name: str, source_path: Path) -> bool:
-    """Smoke-test CUVID hardware decode + scale_cuda with the actual source.
+def check_hwaccel_decode(
+    codec_name: str, source_path: Path, scale_filter: str = "scale_npp",
+) -> bool:
+    """Smoke-test CUVID hardware decode + GPU scale filter with the actual source.
 
     CUVID support varies by codec AND resolution per GPU generation, so we
     test with the real file rather than a synthetic source.  The test also
-    exercises ``scale_cuda`` to confirm the filter is compiled in — some
-    ffmpeg builds have NVENC but lack CUDA filter support.
+    exercises the configured GPU scale filter (``scale_npp`` or ``scale_cuda``)
+    to confirm it is compiled in.
     """
     if codec_name not in _CUVID_DECODERS:
         log.debug("No CUVID decoder for codec %s", codec_name)
@@ -101,7 +103,7 @@ def check_hwaccel_decode(codec_name: str, source_path: Path) -> bool:
         "ffmpeg", "-hide_banner", "-y",
         "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
         "-i", str(source_path),
-        "-vf", "scale_cuda=w=256:h=256:format=yuv420p",
+        "-vf", f"{scale_filter}=w=256:h=256:format=yuv420p",
         "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-",
     ]
     try:

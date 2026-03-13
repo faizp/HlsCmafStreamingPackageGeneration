@@ -76,6 +76,7 @@ def _parse_encoder_configs(raw: dict[str, Any]) -> EncodersConfig:
             hwaccel=nvenc_raw["hwaccel"],
             hwaccel_output_format=nvenc_raw["hwaccel_output_format"],
             scale_filter=nvenc_raw["scale_filter"],
+            scale_interp=nvenc_raw.get("scale_interp", "super"),
             extra_args=list(nvenc_raw.get("extra_args", [])),
         ),
         videotoolbox=VideotoolboxEncoderConfig(
