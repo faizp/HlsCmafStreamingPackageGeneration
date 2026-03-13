@@ -36,7 +36,7 @@ video:
       hwaccel_output_format: cuda
       scale_filter: scale_npp
       scale_interp: super
-      extra_args: ["-spatial-aq", "1", "-temporal-aq", "1", "-aq-strength", "13"]
+      extra_args: ["-spatial-aq", "1", "-temporal-aq", "1", "-aq-strength", "13", "-rc-lookahead", "32", "-bf", "3"]
     videotoolbox:
       codec: h264_videotoolbox
       quality: 65
